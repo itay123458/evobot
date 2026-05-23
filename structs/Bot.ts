@@ -29,21 +29,20 @@ export class Bot {
   public shoukaku: Shoukaku;
 
   public constructor(public readonly client: Client) {
-    const nodes: NodeOption[] = [
-      {
-        name: "Lavalink",
-        url: `${config.LAVALINK_HOST}:${config.LAVALINK_PORT}`,
-        auth: config.LAVALINK_PASSWORD
-      }
-    ];
-
-    this.shoukaku = new Shoukaku(new Connectors.DiscordJS(client), nodes);
+    // Shoukaku v4.3 listens for "clientReady" but Discord.js v14 emits "ready" — manually connect
+    this.shoukaku = new Shoukaku(new Connectors.DiscordJS(client), []);
     this.shoukaku.on("error", (_, error) => console.error("[Lavalink]", error));
 
     this.client.login(config.TOKEN);
 
     this.client.on("ready", () => {
       console.log(`${this.client.user!.username} ready!`);
+      (this.shoukaku as any).id = this.client.user!.id;
+      this.shoukaku.addNode({
+        name: "Lavalink",
+        url: `${config.LAVALINK_HOST}:${config.LAVALINK_PORT}`,
+        auth: config.LAVALINK_PASSWORD
+      });
       this.registerSlashCommands();
     });
 
