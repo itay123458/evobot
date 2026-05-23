@@ -11,7 +11,6 @@ import {
 } from "discord.js";
 import { readdirSync } from "fs";
 import { join } from "path";
-import { Connectors, NodeOption, Shoukaku } from "shoukaku";
 import { Command } from "../interfaces/Command";
 import { checkPermissions, PermissionResult } from "../utils/checkPermissions";
 import { config } from "../utils/config";
@@ -26,23 +25,13 @@ export class Bot {
   public slashCommandsMap = new Collection<string, Command>();
   public cooldowns = new Collection<string, Collection<Snowflake, number>>();
   public queues = new Collection<Snowflake, MusicQueue>();
-  public shoukaku: Shoukaku;
 
   public constructor(public readonly client: Client) {
-    // Shoukaku v4.3 listens for "clientReady" but Discord.js v14 emits "ready" — manually connect
-    this.shoukaku = new Shoukaku(new Connectors.DiscordJS(client), []);
-    this.shoukaku.on("error", (_, error) => console.error("[Lavalink]", error));
-
     this.client.login(config.TOKEN);
 
     this.client.on("ready", () => {
       console.log(`${this.client.user!.username} ready!`);
-      (this.shoukaku as any).id = this.client.user!.id;
-      this.shoukaku.addNode({
-        name: "Lavalink",
-        url: `${config.LAVALINK_HOST}:${config.LAVALINK_PORT}`,
-        auth: config.LAVALINK_PASSWORD
-      });
+
       this.registerSlashCommands();
     });
 

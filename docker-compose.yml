@@ -1,30 +1,8 @@
 version: "3.8"
-
 services:
-  lavalink:
-    image: ghcr.io/lavalink-devs/lavalink:4
-    container_name: lavalink
-    restart: unless-stopped
-    volumes:
-      - ./application.yml:/opt/Lavalink/application.yml
-    expose:
-      - "2333"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf -H 'Authorization: youshallnotpass' http://localhost:2333/v4/info || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 15
-      start_period: 30s
-
   evobot:
     build: .
     container_name: evobot
     restart: unless-stopped
     environment:
       - TOKEN=${TOKEN}
-      - LAVALINK_HOST=lavalink
-      - LAVALINK_PORT=2333
-      - LAVALINK_PASSWORD=youshallnotpass
-    depends_on:
-      lavalink:
-        condition: service_healthy

@@ -14,7 +14,7 @@ export default {
 
     if (!canModifyQueue(guildMemer!)) return i18n.__("common.errorNotChannel");
 
-    queue.player.stopTrack();
+    queue.player.stop(true);
 
     safeReply(interaction, i18n.__mf("skip.result", { author: interaction.user.id }));
   }

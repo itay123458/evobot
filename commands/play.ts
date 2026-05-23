@@ -1,3 +1,4 @@
+import { DiscordGatewayAdapterCreator, joinVoiceChannel } from "@discordjs/voice";
 import { ChatInputCommandInteraction, PermissionsBitField, SlashCommandBuilder, TextChannel } from "discord.js";
 import { bot } from "../index";
 import { MusicQueue } from "../structs/MusicQueue";
@@ -24,7 +25,7 @@ export default {
 
     const queue = bot.queues.get(interaction.guild!.id);
 
-    if (queue && channel.id !== (queue.player as any).connection?.channelId)
+    if (queue && channel.id !== queue.connection.joinConfig.channelId)
       return interaction
         .reply({
           content: i18n.__mf("play.errorNotInSameChannel", { user: bot.client.user!.username }),
@@ -42,20 +43,17 @@ export default {
     if (interaction.replied) await interaction.editReply("⏳ Loading...").catch(console.error);
     else await interaction.reply("⏳ Loading...");
 
+    // Start the playlist if playlist url was provided
     if (playlistPattern.test(url)) {
       await interaction.editReply("🔗 Link is playlist").catch(console.error);
-      return bot.slashCommandsMap.get("playlist")!.execute(interaction, "song");
-    }
 
-    const node = bot.shoukaku.options.nodeResolver(bot.shoukaku.nodes);
-    if (!node) {
-      return interaction.editReply({ content: i18n.__("common.errorCommand") }).catch(console.error);
+      return bot.slashCommandsMap.get("playlist")!.execute(interaction, "song");
     }
 
     let song;
 
     try {
-      song = await Song.from(node, url, url);
+      song = await Song.from(url, url);
     } catch (error: any) {
       console.error(error);
 
@@ -69,7 +67,9 @@ export default {
           .editReply({ content: i18n.__mf("play.errorInvalidURL", { url: `<${url}>` }) })
           .catch(console.error);
 
-      return interaction.editReply({ content: i18n.__("common.errorCommand") }).catch(console.error);
+      if (interaction.replied)
+        return await interaction.editReply({ content: i18n.__("common.errorCommand") }).catch(console.error);
+      else return interaction.reply({ content: i18n.__("common.errorCommand"), ephemeral: true }).catch(console.error);
     }
 
     if (queue) {
@@ -80,21 +80,18 @@ export default {
         .catch(console.error);
     }
 
-    const player = await bot.shoukaku.joinVoiceChannel({
-      guildId: channel.guild.id,
-      channelId: channel.id,
-      shardId: channel.guild.shardId,
-      deaf: true
-    });
-
     const newQueue = new MusicQueue({
       interaction,
       textChannel: interaction.channel! as TextChannel,
-      player,
-      node
+      connection: joinVoiceChannel({
+        channelId: channel.id,
+        guildId: channel.guild.id,
+        adapterCreator: channel.guild.voiceAdapterCreator as DiscordGatewayAdapterCreator
+      })
     });
 
     bot.queues.set(interaction.guild!.id, newQueue);
+
     newQueue.enqueue(song);
     interaction.deleteReply().catch(console.error);
   }

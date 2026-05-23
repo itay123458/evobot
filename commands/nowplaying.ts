@@ -13,7 +13,7 @@ export default {
       return interaction.reply({ content: i18n.__("nowplaying.errorNotQueue"), ephemeral: true }).catch(console.error);
 
     const song = queue.songs[0];
-    const seek = queue.position;
+    const seek = queue.resource.playbackDuration / 1000;
     const left = song.duration - seek;
 
     let nowPlaying = new EmbedBuilder()

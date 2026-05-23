@@ -1,4 +1,6 @@
-import { Node, Track } from "shoukaku";
+import ytdl from "@distube/ytdl-core";
+import { AudioResource, createAudioResource, StreamType } from "@discordjs/voice";
+import youtube from "youtube-sr";
 import { i18n } from "../utils/i18n";
 import { videoPattern, isURL } from "../utils/patterns";
 
@@ -6,78 +8,55 @@ export interface SongData {
   url: string;
   title: string;
   duration: number;
-  track?: Track;
 }
 
 export class Song {
   public readonly url: string;
   public readonly title: string;
   public readonly duration: number;
-  public track?: Track;
 
-  public constructor({ url, title, duration, track }: SongData) {
+  public constructor({ url, title, duration }: SongData) {
     this.url = url;
     this.title = title;
     this.duration = duration;
-    this.track = track;
   }
 
-  public static async from(node: Node, url: string = "", search: string = "") {
+  public static async from(url: string = "", search: string = "") {
     const isYoutubeUrl = videoPattern.test(url);
-    const query = isYoutubeUrl ? url : `ytsearch:${search}`;
 
-    const result = await node.rest.resolve(query);
+    if (isYoutubeUrl) {
+      const info = await ytdl.getBasicInfo(url);
+      return new this({
+        url: info.videoDetails.video_url,
+        title: info.videoDetails.title,
+        duration: parseInt(info.videoDetails.lengthSeconds)
+      });
+    }
 
-    if (!result || result.loadType === "empty" || result.loadType === "error") {
+    const result = await youtube.searchOne(search);
+
+    if (!result) {
       const err = new Error(`No search results found for ${search}`);
       err.name = isURL.test(url) ? "InvalidURL" : "NoResults";
       throw err;
     }
 
-    let track: Track;
-
-    if (result.loadType === "track") {
-      track = result.data as Track;
-    } else if (result.loadType === "search") {
-      const tracks = (result.data as any).tracks as Track[];
-      if (!tracks?.length) {
-        const err = new Error(`No search results found for ${search}`);
-        err.name = "NoResults";
-        throw err;
-      }
-      track = tracks[0];
-    } else {
-      const err = new Error(`Unexpected load type: ${result.loadType}`);
-      err.name = "NoResults";
-      throw err;
-    }
-
+    const info = await ytdl.getBasicInfo(`https://youtube.com/watch?v=${result.id}`);
     return new this({
-      url: track.info.uri ?? url,
-      title: track.info.title,
-      duration: track.info.length / 1000,
-      track
+      url: info.videoDetails.video_url,
+      title: info.videoDetails.title,
+      duration: parseInt(info.videoDetails.lengthSeconds)
     });
   }
 
-  public async resolveTrack(node: Node): Promise<Track> {
-    if (this.track) return this.track;
+  public async makeResource(): Promise<AudioResource<Song> | void> {
+    const stream = ytdl(this.url, {
+      filter: "audioonly",
+      quality: "highestaudio",
+      highWaterMark: 1 << 25
+    });
 
-    const result = await node.rest.resolve(this.url);
-
-    if (!result || result.loadType === "empty" || result.loadType === "error") {
-      throw new Error(`Failed to resolve track: ${this.url}`);
-    }
-
-    if (result.loadType === "track") {
-      this.track = result.data as Track;
-    } else {
-      const tracks = (result.data as any).tracks as Track[];
-      if (!tracks?.length) throw new Error(`No results for: ${this.url}`);
-      this.track = tracks[0];
-    }
-
-    return this.track;
+    return createAudioResource(stream, { metadata: this, inputType: StreamType.Arbitrary, inlineVolume: true });
   }
 
   public startMessage() {
