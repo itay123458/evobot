@@ -1,8 +1,9 @@
-import { VoiceConnection } from "@discordjs/voice";
+import { Node, Player } from "shoukaku";
 import { CommandInteraction, TextChannel } from "discord.js";
 
 export interface QueueOptions {
   interaction: CommandInteraction;
   textChannel: TextChannel;
-  connection: VoiceConnection;
+  player: Player;
+  node: Node;
 }

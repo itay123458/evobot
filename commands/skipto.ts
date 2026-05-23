@@ -42,7 +42,7 @@ export default {
       queue.songs = queue.songs.slice(playlistSlotArg - 2);
     }
 
-    queue.player.stop();
+    queue.player.stopTrack();
 
     interaction
       .reply({ content: i18n.__mf("skipto.result", { author: interaction.user.id, arg: playlistSlotArg - 1 }) })

@@ -11,6 +11,7 @@ import {
 } from "discord.js";
 import { readdirSync } from "fs";
 import { join } from "path";
+import { Connectors, NodeOption, Shoukaku } from "shoukaku";
 import { Command } from "../interfaces/Command";
 import { checkPermissions, PermissionResult } from "../utils/checkPermissions";
 import { config } from "../utils/config";
@@ -25,13 +26,24 @@ export class Bot {
   public slashCommandsMap = new Collection<string, Command>();
   public cooldowns = new Collection<string, Collection<Snowflake, number>>();
   public queues = new Collection<Snowflake, MusicQueue>();
+  public shoukaku: Shoukaku;
 
   public constructor(public readonly client: Client) {
+    const nodes: NodeOption[] = [
+      {
+        name: "Lavalink",
+        url: `${config.LAVALINK_HOST}:${config.LAVALINK_PORT}`,
+        auth: config.LAVALINK_PASSWORD
+      }
+    ];
+
+    this.shoukaku = new Shoukaku(new Connectors.DiscordJS(client), nodes);
+    this.shoukaku.on("error", (_, error) => console.error("[Lavalink]", error));
+
     this.client.login(config.TOKEN);
 
     this.client.on("ready", () => {
       console.log(`${this.client.user!.username} ready!`);
-
       this.registerSlashCommands();
     });
 

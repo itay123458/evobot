@@ -17,11 +17,11 @@ WORKDIR /home/evobot
 FROM base AS build
 
 COPY --chown=${USER}:${USER}  . .
-RUN npm ci
+RUN npm install
 RUN npm run build
 
 RUN rm -rf node_modules && \
-    npm ci --omit=dev
+    npm install --omit=dev
 
 FROM node:${NODE_VERSION} AS prod
 

@@ -14,7 +14,8 @@ export default {
 
     if (!canModifyQueue(guildMemer!)) return i18n.__("common.errorNotChannel");
 
-    if (queue.player.pause()) {
+    if (queue.playing && !queue.player.paused) {
+      queue.player.setPaused(true);
       const content = i18n.__mf("pause.result", { author: interaction.user.id });
 
       safeReply(interaction, content);

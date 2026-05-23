@@ -1,18 +1,4 @@
 import {
-  AudioPlayer,
-  AudioPlayerPlayingState,
-  AudioPlayerState,
-  AudioPlayerStatus,
-  AudioResource,
-  createAudioPlayer,
-  entersState,
-  NoSubscriberBehavior,
-  VoiceConnection,
-  VoiceConnectionDisconnectReason,
-  VoiceConnectionState,
-  VoiceConnectionStatus
-} from "@discordjs/voice";
-import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonInteraction,
@@ -23,7 +9,7 @@ import {
   Message,
   TextChannel
 } from "discord.js";
-import { promisify } from "node:util";
+import { Node, Player } from "shoukaku";
 import { bot } from "../index";
 import { QueueOptions } from "../interfaces/QueueOptions";
 import { config } from "../utils/config";
@@ -32,108 +18,57 @@ import { canModifyQueue } from "../utils/queue";
 import { Song } from "./Song";
 import { safeReply } from "../utils/safeReply";
 
-const wait = promisify(setTimeout);
-
 export class MusicQueue {
   public readonly interaction: CommandInteraction;
-  public readonly connection: VoiceConnection;
-  public readonly player: AudioPlayer;
+  public readonly player: Player;
+  public readonly node: Node;
   public readonly textChannel: TextChannel;
   public readonly bot = bot;
 
-  public resource: AudioResource;
   public songs: Song[] = [];
   public volume = config.DEFAULT_VOLUME || 100;
   public loop = false;
   public muted = false;
-  public waitTimeout: NodeJS.Timeout | null;
+  public waitTimeout: NodeJS.Timeout | null = null;
+  public playing = false;
+
   private queueLock = false;
-  private readyLock = false;
   private stopped = false;
 
-  /**
-   * Constructs a new MusicQueue instance, setting up the audio player,
-   * voice connection, and event listeners to manage voice state changes
-   * and audio playback. It also handles network state changes to ensure
-   * a stable connection for audio streaming.
-   * @param options
-   */
   public constructor(options: QueueOptions) {
     Object.assign(this, options);
 
-    this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
-    this.connection.subscribe(this.player);
-
-    const networkStateChangeHandler = (
-      oldNetworkState: VoiceConnectionState,
-      newNetworkState: VoiceConnectionState
-    ) => {
-      const newUdp = Reflect.get(newNetworkState, "udp");
-      clearInterval(newUdp?.keepAliveInterval);
-    };
-
-    this.connection.on("stateChange", async (oldState: VoiceConnectionState, newState: VoiceConnectionState) => {
-      Reflect.get(oldState, "networking")?.off("stateChange", networkStateChangeHandler);
-      Reflect.get(newState, "networking")?.on("stateChange", networkStateChangeHandler);
-
-      if (newState.status === VoiceConnectionStatus.Disconnected) {
-        if (newState.reason === VoiceConnectionDisconnectReason.WebSocketClose && newState.closeCode === 4014) {
-          try {
-            this.stop();
-          } catch (e) {
-            console.log(e);
-            this.stop();
-          }
-        } else if (this.connection.rejoinAttempts < 5) {
-          await wait((this.connection.rejoinAttempts + 1) * 5_000);
-          this.connection.rejoin();
-        } else {
-          this.connection.destroy();
-        }
-      } else if (
-        !this.readyLock &&
-        (newState.status === VoiceConnectionStatus.Connecting || newState.status === VoiceConnectionStatus.Signalling)
-      ) {
-        this.readyLock = true;
-        try {
-          await entersState(this.connection, VoiceConnectionStatus.Ready, 20_000);
-        } catch {
-          if (this.connection.state.status !== VoiceConnectionStatus.Destroyed) {
-            try {
-              this.connection.destroy();
-            } catch {}
-          }
-        } finally {
-          this.readyLock = false;
-        }
-      }
+    this.player.on("start", () => {
+      this.playing = true;
+      this.sendPlayingMessage();
     });
 
-    this.player.on("stateChange", async (oldState: AudioPlayerState, newState: AudioPlayerState) => {
-      if (oldState.status !== AudioPlayerStatus.Idle && newState.status === AudioPlayerStatus.Idle) {
-        if (this.loop && this.songs.length) {
-          this.songs.push(this.songs.shift()!);
-        } else {
-          this.songs.shift();
-          if (!this.songs.length) return this.stop();
-        }
+    this.player.on("end", async (data: any) => {
+      if (data?.reason === "replaced") return;
+      if (this.stopped) return;
 
-        if (this.songs.length || this.resource.audioPlayer) this.processQueue();
-      } else if (oldState.status === AudioPlayerStatus.Buffering && newState.status === AudioPlayerStatus.Playing) {
-        this.sendPlayingMessage(newState);
-      }
-    });
-
-    this.player.on("error", (error) => {
-      console.error(error);
+      this.playing = false;
 
       if (this.loop && this.songs.length) {
         this.songs.push(this.songs.shift()!);
       } else {
         this.songs.shift();
+        if (!this.songs.length) return this.stop();
       }
 
       this.processQueue();
+    });
+
+    this.player.on("exception", (error: any) => {
+      console.error(error);
+      this.playing = false;
+      this.songs.shift();
+      this.processQueue();
+    });
+
+    this.player.on("closed", () => {
+      this.playing = false;
+      bot.queues.delete(this.interaction.guild!.id);
     });
   }
 
@@ -151,56 +86,44 @@ export class MusicQueue {
     this.stopped = true;
     this.loop = false;
     this.songs = [];
-    this.player.stop();
+    this.playing = false;
+    this.player.stopTrack();
 
     !config.PRUNING && this.textChannel.send(i18n.__("play.queueEnded")).catch(console.error);
 
     if (this.waitTimeout !== null) return;
 
     this.waitTimeout = setTimeout(() => {
-      if (this.connection.state.status !== VoiceConnectionStatus.Destroyed) {
-        try {
-          this.connection.destroy();
-        } catch {}
-      }
+      bot.shoukaku.leaveVoiceChannel(this.interaction.guild!.id);
       bot.queues.delete(this.interaction.guild!.id);
-
       !config.PRUNING && this.textChannel.send(i18n.__("play.leaveChannel"));
     }, config.STAY_TIME * 1000);
   }
 
-  /**
-   * Processes the song queue for playback. This method checks if the queue is locked or if the player
-   * is busy. If not, it proceeds to play the next song in the queue. This method is also responsible
-   * for handling playback errors and retrying song playback when necessary. It ensures that the queue
-   * continues to play smoothly, handling transitions between songs, including loop and stop behaviors.
-   */
   public async processQueue(): Promise<void> {
-    if (this.queueLock || this.player.state.status !== AudioPlayerStatus.Idle) {
-      return;
-    }
-
-    if (!this.songs.length) {
-      return this.stop();
-    }
+    if (this.queueLock || this.playing) return;
+    if (!this.songs.length) return this.stop();
 
     this.queueLock = true;
 
     const next = this.songs[0];
 
     try {
-      const resource = await next.makeResource();
-
-      this.resource = resource!;
-      this.player.play(this.resource);
-      this.resource.volume?.setVolumeLogarithmic(this.volume / 100);
+      const track = await next.resolveTrack(this.node);
+      await this.player.playTrack({ track });
+      await this.player.setGlobalVolume(this.volume * 10);
     } catch (error) {
       console.error(error);
-
+      this.songs.shift();
+      this.queueLock = false;
       return this.processQueue();
     } finally {
       this.queueLock = false;
     }
+  }
+
+  public get position(): number {
+    return this.player.position / 1000;
   }
 
   private async handleSkip(interaction: ButtonInteraction): Promise<void> {
@@ -208,7 +131,7 @@ export class MusicQueue {
   }
 
   private async handlePlayPause(interaction: ButtonInteraction): Promise<void> {
-    if (this.player.state.status === AudioPlayerStatus.Playing) {
+    if (this.playing && !this.player.paused) {
       await this.bot.slashCommandsMap.get("pause")!.execute(interaction);
     } else {
       await this.bot.slashCommandsMap.get("resume")!.execute(interaction);
@@ -221,24 +144,20 @@ export class MusicQueue {
     this.muted = !this.muted;
 
     if (this.muted) {
-      this.resource.volume?.setVolumeLogarithmic(0);
-
+      await this.player.setGlobalVolume(0);
       safeReply(interaction, i18n.__mf("play.mutedSong", { author: interaction.user })).catch(console.error);
     } else {
-      this.resource.volume?.setVolumeLogarithmic(this.volume / 100);
-
+      await this.player.setGlobalVolume(this.volume * 10);
       safeReply(interaction, i18n.__mf("play.unmutedSong", { author: interaction.user })).catch(console.error);
     }
   }
 
   private async handleDecreaseVolume(interaction: ButtonInteraction): Promise<void> {
     if (this.volume == 0) return;
-
     if (!canModifyQueue(interaction.member as GuildMember)) return;
 
     this.volume = Math.max(this.volume - 10, 0);
-
-    this.resource.volume?.setVolumeLogarithmic(this.volume / 100);
+    await this.player.setGlobalVolume(this.volume * 10);
 
     safeReply(interaction, i18n.__mf("play.decreasedVolume", { author: interaction.user, volume: this.volume })).catch(
       console.error
@@ -247,12 +166,10 @@ export class MusicQueue {
 
   private async handleIncreaseVolume(interaction: ButtonInteraction): Promise<void> {
     if (this.volume == 100) return;
-
     if (!canModifyQueue(interaction.member as GuildMember)) return;
 
     this.volume = Math.min(this.volume + 10, 100);
-
-    this.resource.volume?.setVolumeLogarithmic(this.volume / 100);
+    await this.player.setGlobalVolume(this.volume * 10);
 
     safeReply(interaction, i18n.__mf("play.increasedVolume", { author: interaction.user, volume: this.volume })).catch(
       console.error
@@ -299,16 +216,9 @@ export class MusicQueue {
     return [firstRow, secondRow];
   }
 
-  /**
-   * Sets up a message component collector for the playing message to handle
-   * button interactions. This collector listens for button clicks and dispatches
-   * commands based on the custom ID of the clicked button. It supports functionalities
-   * like skip, stop, play/pause, volume control, and more. The collector is also
-   * responsible for stopping itself when the corresponding song is skipped or stopped,
-   * ensuring that interactions are only valid for the current playing song.
-   */
-  private async sendPlayingMessage(newState: AudioPlayerPlayingState) {
-    const song = (newState.resource as AudioResource<Song>).metadata;
+  private async sendPlayingMessage() {
+    const song = this.songs[0];
+    if (!song) return;
 
     let playingMessage: Message;
 
@@ -342,10 +252,8 @@ export class MusicQueue {
     });
 
     collector.on("end", () => {
-      // Remove the buttons when the song ends
       playingMessage.edit({ components: [] }).catch(console.error);
 
-      // Delete the message if pruning is enabled
       if (config.PRUNING) {
         setTimeout(() => {
           playingMessage.delete().catch();

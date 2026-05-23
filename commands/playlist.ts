@@ -1,4 +1,3 @@
-import { DiscordGatewayAdapterCreator, joinVoiceChannel } from "@discordjs/voice";
 import {
   ChatInputCommandInteraction,
   EmbedBuilder,
@@ -30,7 +29,7 @@ export default {
     if (!channel)
       return interaction.reply({ content: i18n.__("playlist.errorNotChannel"), ephemeral: true }).catch(console.error);
 
-    if (queue && channel.id !== queue.connection.joinConfig.channelId)
+    if (queue && channel.id !== (queue.player as any).connection?.channelId) {
       if (interaction.replied)
         return interaction
           .editReply({ content: i18n.__mf("play.errorNotInSameChannel", { user: interaction.client.user!.username }) })
@@ -42,6 +41,7 @@ export default {
             ephemeral: true
           })
           .catch(console.error);
+    }
 
     let playlist;
 
@@ -61,14 +61,25 @@ export default {
     if (queue) {
       queue.songs.push(...playlist.videos);
     } else {
+      const node = bot.shoukaku.options.nodeResolver(bot.shoukaku.nodes);
+      if (!node) {
+        return interaction
+          .reply({ content: i18n.__("common.errorCommand"), ephemeral: true })
+          .catch(console.error);
+      }
+
+      const player = await bot.shoukaku.joinVoiceChannel({
+        guildId: channel.guild.id,
+        channelId: channel.id,
+        shardId: channel.guild.shardId,
+        deaf: true
+      });
+
       const newQueue = new MusicQueue({
         interaction,
         textChannel: interaction.channel! as TextChannel,
-        connection: joinVoiceChannel({
-          channelId: channel.id,
-          guildId: channel.guild.id,
-          adapterCreator: channel.guild.voiceAdapterCreator as DiscordGatewayAdapterCreator
-        })
+        player,
+        node
       });
 
       bot.queues.set(interaction.guild!.id, newQueue);
