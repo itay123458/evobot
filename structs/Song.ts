@@ -1,4 +1,4 @@
-import ytdl from "@distube/ytdl-core";
+import youtubedl from "youtube-dl-exec";
 import { AudioResource, createAudioResource, StreamType } from "@discordjs/voice";
 import youtube from "youtube-sr";
 import { i18n } from "../utils/i18n";
@@ -24,39 +24,41 @@ export class Song {
   public static async from(url: string = "", search: string = "") {
     const isYoutubeUrl = videoPattern.test(url);
 
+    let video;
+
     if (isYoutubeUrl) {
-      const info = await ytdl.getBasicInfo(url);
-      return new this({
-        url: info.videoDetails.video_url,
-        title: info.videoDetails.title,
-        duration: parseInt(info.videoDetails.lengthSeconds)
-      });
+      video = await youtube.getVideo(url);
+    } else {
+      video = await youtube.searchOne(search);
     }
 
-    const result = await youtube.searchOne(search);
-
-    if (!result) {
+    if (!video) {
       const err = new Error(`No search results found for ${search}`);
       err.name = isURL.test(url) ? "InvalidURL" : "NoResults";
       throw err;
     }
 
-    const info = await ytdl.getBasicInfo(`https://youtube.com/watch?v=${result.id}`);
     return new this({
-      url: info.videoDetails.video_url,
-      title: info.videoDetails.title,
-      duration: parseInt(info.videoDetails.lengthSeconds)
+      url: `https://youtube.com/watch?v=${video.id}`,
+      title: video.title!,
+      duration: video.duration / 1000
     });
   }
 
-  public async makeResource(): Promise<AudioResource<Song> | void> {
-    const stream = ytdl(this.url, {
-      filter: "audioonly",
-      quality: "highestaudio",
-      highWaterMark: 1 << 25
+  public async makeResource(): Promise<AudioResource<Song>> {
+    const proc = youtubedl.exec(this.url, {
+      output: "-",
+      quiet: true,
+      format: "bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio"
     });
 
-    return createAudioResource(stream, { metadata: this, inputType: StreamType.Arbitrary, inlineVolume: true });
+    if (!proc.stdout) throw new Error("yt-dlp: no output stream");
+
+    return createAudioResource(proc.stdout, {
+      metadata: this,
+      inputType: StreamType.Arbitrary,
+      inlineVolume: true
+    });
   }
 
   public startMessage() {

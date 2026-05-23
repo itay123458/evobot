@@ -21,7 +21,6 @@
   },
   "dependencies": {
     "@discordjs/voice": "^0.17.0",
-    "@distube/ytdl-core": "^4.14.4",
     "array-move": "^3.0.1",
     "discord.js": "^14.15.3",
     "dotenv": "^16.4.5",
@@ -29,6 +28,7 @@
     "i18n": "^0.15.1",
     "lyrics-finder": "^21.0.5",
     "string-progressbar": "^1.0.4",
+    "youtube-dl-exec": "^3.0.12",
     "youtube-sr": "~4.3.0"
   },
   "devDependencies": {

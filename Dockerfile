@@ -4,8 +4,10 @@ FROM node:${NODE_VERSION} AS base
 ENV USER=evobot
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 build-essential && \
-    apt-get purge -y --auto-remove && \
+    apt-get install -y --no-install-recommends python3 build-essential curl ca-certificates && \
+    curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp && \
+    apt-get purge -y --auto-remove build-essential && \
     rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r ${USER} && \
@@ -17,11 +19,11 @@ WORKDIR /home/evobot
 FROM base AS build
 
 COPY --chown=${USER}:${USER}  . .
-RUN npm install
+RUN YOUTUBE_DL_SKIP_PYTHON_CHECK=1 npm install
 RUN npm run build
 
 RUN rm -rf node_modules && \
-    npm install --omit=dev
+    YOUTUBE_DL_SKIP_PYTHON_CHECK=1 npm install --omit=dev
 
 FROM node:${NODE_VERSION} AS prod
 
@@ -29,6 +31,8 @@ ENV USER=evobot
 
 RUN groupadd -r ${USER} && \
     useradd --create-home --home /home/evobot -r -g ${USER} ${USER}
+
+COPY --from=base /usr/local/bin/yt-dlp /usr/local/bin/yt-dlp
 
 USER ${USER}
 WORKDIR /home/evobot
